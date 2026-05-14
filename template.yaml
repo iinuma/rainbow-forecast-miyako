@@ -103,6 +103,7 @@ Resources:
         Variables:
           BUCKET_NAME:              !Ref ScoresBucket
           DEVICES_TABLE:            rainbow-device-locations
+          SIGHTINGS_TABLE:          !Ref SightingsTable
           SNS_PLATFORM_ARN_SANDBOX: !Ref SNSPlatformArnSandbox
           SNS_PLATFORM_ARN_PROD:    !Ref SNSPlatformArnProduction
           REGION_ID:                miyako
@@ -113,6 +114,9 @@ Resources:
             - Effect: Allow
               Action: dynamodb:Scan
               Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/rainbow-device-locations"
+            - Effect: Allow
+              Action: dynamodb:Scan
+              Resource: !GetAtt SightingsTable.Arn
             - Effect: Allow
               Action: sns:Publish
               Resource: "*"

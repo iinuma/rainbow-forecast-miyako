@@ -4,9 +4,10 @@ Rainbow Forecast Lambda — 宮古島版
 スコア 70+ のエリアが存在する場合、近隣デバイスに push 通知を送信する。
 """
 import json, math, urllib.request, os
+from collections import defaultdict
 import boto3
 from boto3.dynamodb.conditions import Attr
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # ── Config ────────────────────────────────────────────────────
 CENTER_LAT   = 24.805
@@ -18,9 +19,10 @@ HALF_N       = SIDE_KM // GRID_KM    // 2
 HALF_W       = SIDE_KM // WEATHER_KM // 2
 COVERAGE_KM  = SIDE_KM / 2
 
-BUCKET       = os.environ['BUCKET_NAME']
-KEY          = 'latest.geojson'
+BUCKET           = os.environ['BUCKET_NAME']
+KEY              = 'latest.geojson'
 DEVICES_TABLE    = os.environ.get('DEVICES_TABLE', '')
+SIGHTINGS_TABLE  = os.environ.get('SIGHTINGS_TABLE', '')
 ARN_SANDBOX      = os.environ.get('SNS_PLATFORM_ARN_SANDBOX', '')
 ARN_PROD         = os.environ.get('SNS_PLATFORM_ARN_PROD', '')
 REGION_ID        = os.environ.get('REGION_ID', 'miyako')
@@ -268,7 +270,29 @@ def lambda_handler(event, context):
     else:
         print(f'[RAIN] {now.isoformat()} points={len(features)} sun_alt={sun_alt:.1f}° (rain display only)')
 
+    _refresh_sightings_json()
     return {'statusCode': 200, 'body': f'Processed {len(features)} points'}
+
+def _refresh_sightings_json():
+    if not SIGHTINGS_TABLE:
+        return
+    table  = boto3.resource('dynamodb').Table(SIGHTINGS_TABLE)
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+    resp   = table.scan(FilterExpression=Attr('timestamp').gte(cutoff))
+    groups = defaultdict(list)
+    for item in resp.get('Items', []):
+        key = (item['lat'], item['lon'])
+        groups[key].append(item['timestamp'])
+    features = [{
+        'type': 'Feature',
+        'geometry': {'type': 'Point', 'coordinates': [float(lon), float(lat)]},
+        'properties': {'count': len(ts), 'last_timestamp': max(ts)},
+    } for (lat, lon), ts in groups.items()]
+    boto3.client('s3').put_object(
+        Bucket=BUCKET, Key='sightings.json',
+        Body=json.dumps({'type': 'FeatureCollection', 'features': features}).encode('utf-8'),
+        ContentType='application/json', CacheControl='max-age=60',
+    )
 
 def _upload(payload):
     body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
